@@ -1,0 +1,62 @@
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: make fmt-check vet
+
+  native:
+    name: ${{ matrix.os }} / ${{ matrix.suite }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        suite: [Unit, Integration]
+    runs-on: ${{ matrix.os }}
+    env:
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Locate Windows race-detector C compiler
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command gcc -ErrorAction SilentlyContinue)) {
+            $candidates = @('C:\msys64\ucrt64\bin', 'C:\msys64\mingw64\bin', 'C:\mingw64\bin')
+            $bin = $candidates | Where-Object { Test-Path (Join-Path $_ 'gcc.exe') } | Select-Object -First 1
+            if (-not $bin) { throw 'A MinGW C compiler is required for race tests' }
+            $bin >> $env:GITHUB_PATH
+          }
+      - name: Build and vet natively
+        shell: pwsh
+        run: |
+          ./script/check.ps1 Build
+          ./script/check.ps1 Vet
+      - name: Run ${{ matrix.suite }} tests
+        shell: pwsh
+        run: ./script/check.ps1 ${{ matrix.suite }}
+
+  cross-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: bash script/build-release.sh
