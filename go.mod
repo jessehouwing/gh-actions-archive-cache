@@ -6,7 +6,7 @@ require (
 	github.com/cli/go-gh/v2 v2.17.0
 	github.com/github/actions-lockfile/go v0.0.6
 	github.com/spf13/cobra v1.10.2
-	golang.org/x/sys v0.49.0
+	golang.org/x/sys v0.50.0
 )
 
 require (
