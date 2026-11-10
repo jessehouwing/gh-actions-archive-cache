@@ -273,6 +273,64 @@ func TestCompiledDownloadReuseAndCleanup(t *testing.T) {
 	}
 }
 
+func TestDownloadJSONAndHumanProgress(t *testing.T) {
+	root := t.TempDir()
+	cache := filepath.Join(root, "cache")
+	f := &fixture{zip: fixtureArchive(t, "zip")}
+	server := httptest.NewServer(http.HandlerFunc(f.serve))
+	defer server.Close()
+	args := []string{"download", "o/r", "--hostname", "github.com", "--cache-dir", cache, "--format", "zip"}
+	for _, dry := range []bool{true, false, false} {
+		jsonArgs := append(append([]string{}, args...), "--json")
+		if dry {
+			jsonArgs = append(jsonArgs, "--dry-run")
+		}
+		out, stderr, err := run(t, root, server.URL, jsonArgs...)
+		var report struct {
+			Results []struct {
+				Status, SHA, Ref, Path, Repository string
+			}
+			Downloaded, Cached, Planned, Failed int
+			DryRun                              bool `json:"dry_run"`
+		}
+		if err != nil || stderr != "" || json.Unmarshal([]byte(out), &report) != nil {
+			t.Fatalf("JSON output: %v %s %s", err, out, stderr)
+		}
+		if len(report.Results) != 2 || report.DryRun != dry || report.Failed != 0 ||
+			report.Downloaded+report.Cached+report.Planned != 2 {
+			t.Fatalf("incorrect report: %s", out)
+		}
+		for _, item := range report.Results {
+			if len(item.SHA) != 40 || item.Ref == "" || item.Path == "" || item.Repository != "o/r" {
+				t.Fatalf("missing JSON identity: %s", out)
+			}
+			if dry && item.Status != "planned" {
+				t.Fatalf("incorrect preview status: %s", out)
+			}
+		}
+	}
+	out, stderr, err := run(t, root, server.URL, args...)
+	if err != nil || !strings.Contains(out, "[1/2] Cached") ||
+		!strings.Contains(out, "Done: 0 downloaded, 2 cached") || !strings.Contains(stderr, "Processing 2 archives") {
+		t.Fatalf("human output/progress: %v %s %s", err, out, stderr)
+	}
+	f.mu.Lock()
+	f.zip = []byte("corrupt")
+	f.mu.Unlock()
+	args = []string{"download", "o/r@v1", "--hostname", "github.com", "--cache-dir", filepath.Join(root, "bad"), "--format", "zip", "--json"}
+	out, stderr, err = run(t, root, server.URL, args...)
+	var failure struct {
+		Failed  int
+		Errors  []string
+		Results []struct{ Status, Error string }
+	}
+	if err == nil || json.Unmarshal([]byte(out), &failure) != nil || failure.Failed != 1 ||
+		len(failure.Errors) == 0 || len(failure.Results) != 1 || failure.Results[0].Status != "failed" ||
+		failure.Results[0].Error == "" || !strings.Contains(stderr, "invalid downloaded archive") {
+		t.Fatalf("JSON failure report: %v %s %s", err, out, stderr)
+	}
+}
+
 func lockData(host string) []byte {
 	return []byte(fmt.Sprintf("version: v0.0.3\nworkflows:\n  .github/workflows/ci.yml:\n    - o/r@v1\ndependencies:\n  o/r@v1:\n    hostname: %s\n    ref: v1\n    commit: sha1-%s\n    owner_id: 1\n    repo_id: 2\n", host, strings.Repeat("b", 40)))
 }
@@ -293,7 +351,7 @@ func TestPinnedOfflineReuseAndStrictHosts(t *testing.T) {
 	before := len(f.requests)
 	f.offline = true
 	f.mu.Unlock()
-	if out, stderr, err := run(t, root, server.URL, args...); err != nil || !strings.Contains(out, "cached=1") {
+	if out, stderr, err := run(t, root, server.URL, args...); err != nil || !strings.Contains(out, "1 cached") {
 		t.Fatalf("offline cached import: %v %s %s", err, out, stderr)
 	}
 	f.mu.Lock()
@@ -358,7 +416,7 @@ func TestCanonicalRepositoryCasing(t *testing.T) {
 				t.Fatal(err)
 			}
 			out, stderr, err = run(t, root, server.URL, append(base, "from-lockfile", lock)...)
-			if err != nil || !strings.Contains(out, "cached=2") {
+			if err != nil || !strings.Contains(out, "2 cached") {
 				t.Fatalf("offline import: %v %s %s", err, out, stderr)
 			}
 			f.mu.Lock()
@@ -488,7 +546,7 @@ func TestTransitiveLockfileAndSuppliedPinProtection(t *testing.T) {
 	defer server.Close()
 	base := []string{"--hostname", "tenant.ghe.com", "--cache-dir", cache, "--format", "zip"}
 	out, stderr, err := run(t, root, server.URL, append(base, "from-lockfile", lock)...)
-	if err != nil || !strings.Contains(out, "downloaded=2") {
+	if err != nil || !strings.Contains(out, "2 downloaded") {
 		t.Fatalf("transitive import failed: %v %s %s", err, out, stderr)
 	}
 	// Imported github.com identity must stay authoritative during cleanup too.

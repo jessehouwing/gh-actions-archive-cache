@@ -33,6 +33,7 @@ func NewCommand(out, stderr io.Writer) *cobra.Command {
 		name := name
 		var majors, perMajor int
 		var protect []string
+		var jsonOutput bool
 		cmd := &cobra.Command{Use: name, Args: cobra.ExactArgs(1)}
 		switch name {
 		case "download":
@@ -50,6 +51,9 @@ func NewCommand(out, stderr io.Writer) *cobra.Command {
 		if name != "from-lockfile" {
 			cmd.Flags().IntVar(&majors, "latest-major-versions", 0, "Keep latest N majors (0: unlimited)")
 			cmd.Flags().IntVar(&perMajor, "latest-versions-per-major", 0, "Keep latest N version tags per major plus major pointers (0: unlimited)")
+		}
+		if name != "cleanup" {
+			cmd.Flags().BoolVar(&jsonOutput, "json", false, "Write a single JSON result document to stdout; suppress progress")
 		}
 		cmd.RunE = func(cmd *cobra.Command, args []string) (result error) {
 			if majors < 0 || perMajor < 0 {
@@ -84,9 +88,13 @@ func NewCommand(out, stderr io.Writer) *cobra.Command {
 				return err
 			}
 			defer func() { result = errors.Join(result, release()) }()
+			c.jsonOutput = jsonOutput
 			var entries []entry
 			switch name {
 			case "download":
+				if !jsonOutput {
+					fmt.Fprintln(stderr, "Resolving action refs...")
+				}
 				entries, err = g.resolve(cmd.Context(), args[0], majors, perMajor, formats)
 			case "from-lockfile":
 				p := filepath.FromSlash(lockfile.Path)

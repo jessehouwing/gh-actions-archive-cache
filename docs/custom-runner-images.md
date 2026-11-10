@@ -282,9 +282,9 @@ validated as belonging to either host. Keep both out of image layers, logs,
 and the final image.
 
 Unlocked inputs check tenant repository existence first; lockfile host bindings
-never fall back across hosts. A supported standalone tenant proxy for
-github.com archives has not been established by the live experiment, so allow
-direct access to the selected source host and its archive redirects during image
+never fall back across hosts. Archives are downloaded directly from their
+selected source host rather than through a tenant proxy. Allow access to
+that source host and its archive redirects during image
 provisioning. Do not assume all traffic remains inside the tenant.
 
 ## Refresh and control image size
@@ -327,7 +327,5 @@ coordinate with an actively running Actions runner.
 5. Test a commit absent from the image to confirm ordinary download fallback
    still works, then refresh the image to cover newly adopted versions.
 
-The extension's local validation exercised real GitHub ZIP/tarball downloads,
-repeat-run reuse, and the tenant endpoint probe. Actual runner-job cache-hit
-verification needs an available configured runner; it is a separate image
-acceptance check.
+Actual runner-job cache-hit verification needs an available configured runner;
+it is a separate image acceptance check.

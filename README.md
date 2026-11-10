@@ -149,6 +149,40 @@ checked and validated locally; valid files are never downloaded again. Corrupt
 or nonregular destinations produce an error, not a silent overwrite. In `both`
 mode only missing formats are downloaded.
 
+### Output and progress
+
+Downloads and lockfile imports print the cache directory once, followed by
+numbered results with the action ref, archive format, and source host:
+
+```text
+Cache: D:\test
+[1/2] Cached         actions/checkout@v4 (zip, github.com)
+[2/2] Downloaded     Azure/login@v2 (zip, github.com)
+
+Done: 1 downloaded, 1 cached, 0 planned, 0 failed
+```
+
+Commit-only refs use a short SHA in human output. Progress messages on stderr
+announce ref resolution, processing, and each archive download before it starts.
+Counts refer to unique SHA/format pairs, not tag aliases. Downloads and local
+archive validation currently run **sequentially**, not in parallel. There is
+no byte-level progress bar.
+
+Use `--json` on `download` or `from-lockfile` for automation:
+
+```powershell
+gh actions-archive-cache from-lockfile --json > result.json
+```
+
+Stdout contains one JSON document with `cache_directory`, `dry_run`, `results`,
+`downloaded`, `cached`, `planned`, `failed`, and `errors`. Each result includes
+`host`, `repository`, `ref`, full `sha`, `format`, `path`, and `status`
+(`cached`, `downloaded`, `planned`, or `failed`), plus `error` on failure.
+Progress is suppressed; diagnostics remain on stderr and failures return a
+nonzero exit code. Argument, lockfile, resolution, or cache-opening errors that
+occur before archive processing report only stderr and may produce no JSON.
+The option is not supported on `configure` or `cleanup`.
+
 ## Lockfiles
 
 ```shell
@@ -197,14 +231,8 @@ for credential precedence and supplying separate tenant/github.com tokens.
 Keep `GH_TOKEN` appropriate for the selected home host; a wrongly scoped
 environment token takes precedence over a valid saved login.
 
-The required live experiment on `xebia-partner-dr.ghe.com`, using the accessible
-`Org-2/example` repository, tested the runner's source-derived resolution route
-with synthetic plan/job IDs. Its launch receiver returned 401 for ordinary
-tenant `gh` credentials; the tenant API route returned 404. No download URL was
-returned. A supported standalone tenant proxy for github.com archives was
-**not established**, so github.com-bound archives use github.com directly.
-This does not prove that no such service exists. No runner was registered,
-workflow dispatched, policy changed, or private job token extracted.
+Archives are downloaded directly from their selected source host, including
+github.com for github.com-bound dependencies, rather than through a tenant proxy.
 
 ## Configure a runner, user, or system
 

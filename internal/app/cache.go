@@ -26,8 +26,31 @@ type index struct {
 }
 
 type cache struct {
-	root string
-	data index
+	root       string
+	data       index
+	jsonOutput bool
+}
+
+type downloadResult struct {
+	Host       string `json:"host"`
+	Repository string `json:"repository"`
+	Ref        string `json:"ref"`
+	SHA        string `json:"sha"`
+	Format     string `json:"format"`
+	Path       string `json:"path"`
+	Status     string `json:"status"`
+	Error      string `json:"error,omitempty"`
+}
+
+type downloadReport struct {
+	CacheDirectory string           `json:"cache_directory"`
+	DryRun         bool             `json:"dry_run"`
+	Results        []downloadResult `json:"results"`
+	Downloaded     int              `json:"downloaded"`
+	Cached         int              `json:"cached"`
+	Planned        int              `json:"planned"`
+	Failed         int              `json:"failed"`
+	Errors         []string         `json:"errors"`
 }
 
 func safeDirectory(dir string, create bool) error {
@@ -418,6 +441,17 @@ func (c *cache) download(ctx context.Context, g *github, entries []entry, dry bo
 	seen := map[string]bool{}
 	success := map[string]entry{}
 	cached, downloaded, failed := 0, 0, 0
+	planned := 0
+	unique := map[string]bool{}
+	for _, e := range entries {
+		unique[e.key()] = true
+	}
+	total := len(unique)
+	report := downloadReport{CacheDirectory: c.root, DryRun: dry, Results: []downloadResult{}, Errors: []string{}}
+	if !c.jsonOutput {
+		fmt.Fprintf(out, "Cache: %s\n", c.root)
+		fmt.Fprintf(stderr, "Processing %d archives sequentially (including local validation)...\n", total)
+	}
 	var errs []error
 	for _, e := range entries {
 		if seen[e.key()] {
@@ -428,6 +462,11 @@ func (c *cache) download(ctx context.Context, g *github, entries []entry, dry bo
 			continue
 		}
 		seen[e.key()] = true
+		label := e.Ref
+		if label == "" || shaPattern.MatchString(label) {
+			label = e.SHA[:min(12, len(e.SHA))]
+		}
+		status := "failed"
 		p, err := c.destination(e)
 		var exists bool
 		if err == nil {
@@ -449,16 +488,29 @@ func (c *cache) download(ctx context.Context, g *github, entries []entry, dry bo
 			switch {
 			case exists:
 				cached++
-				fmt.Fprintf(out, "cached %s %s@%s %q\n", e.Host, e.Repo, e.SHA, p)
+				status = "cached"
 			case dry:
-				fmt.Fprintf(out, "would download %s %s@%s %q\n", e.Host, e.Repo, e.SHA, p)
+				planned++
+				status = "planned"
 			default:
+				if !c.jsonOutput {
+					fmt.Fprintf(stderr, "[%d/%d] Downloading %s@%s (%s) from %s...\n", len(seen), total, e.Repo, label, e.Format, e.Host)
+				}
 				err = c.fetch(ctx, g, e)
 				if err == nil {
 					downloaded++
-					fmt.Fprintf(out, "downloaded %s %s@%s %q\n", e.Host, e.Repo, e.SHA, p)
+					status = "downloaded"
 				}
 			}
+		}
+		item := downloadResult{Host: e.Host, Repository: e.Repo, Ref: e.Ref, SHA: e.SHA, Format: e.Format, Path: p, Status: status}
+		if err != nil {
+			item.Error = err.Error()
+		}
+		report.Results = append(report.Results, item)
+		if !c.jsonOutput {
+			displayStatus := map[string]string{"cached": "Cached", "downloaded": "Downloaded", "planned": "Would download", "failed": "Failed"}[status]
+			fmt.Fprintf(out, "[%d/%d] %-14s %s@%s (%s, %s)\n", len(seen), total, displayStatus, e.Repo, label, e.Format, e.Host)
 		}
 		if err != nil {
 			failed++
@@ -474,6 +526,20 @@ func (c *cache) download(ctx context.Context, g *github, entries []entry, dry bo
 	if !dry {
 		errs = append(errs, c.save())
 	}
-	fmt.Fprintf(out, "downloaded=%d cached=%d failed=%d dry-run=%t\n", downloaded, cached, failed, dry)
+	if c.jsonOutput {
+		report.Downloaded, report.Cached, report.Planned, report.Failed = downloaded, cached, planned, failed
+		for _, err := range errs {
+			if err != nil {
+				report.Errors = append(report.Errors, err.Error())
+			}
+		}
+		errs = append(errs, json.NewEncoder(out).Encode(report))
+	} else {
+		fmt.Fprintf(out, "\nDone: %d downloaded, %d cached, %d planned, %d failed", downloaded, cached, planned, failed)
+		if dry {
+			fmt.Fprint(out, " (dry run)")
+		}
+		fmt.Fprintln(out)
+	}
 	return errors.Join(errs...)
 }
